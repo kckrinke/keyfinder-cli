@@ -2,6 +2,19 @@
 #include <mutex>
 #include <memory>
 #include <getopt.h>
+#include <iterator>
+#include <string>
+#include <vector>
+#include <stdio.h>
+
+#include <sys/stat.h>
+#include <boost/foreach.hpp>
+#include <boost/filesystem/operations.hpp>
+#include <boost/filesystem/path.hpp>
+#include <boost/filesystem.hpp>
+#include <boost/algorithm/string/predicate.hpp>
+namespace fs = boost::filesystem;
+
 #include <keyfinder/keyfinder.h>
 #include <keyfinder/constants.h>
 
@@ -15,6 +28,9 @@ extern "C"
 }
 
 #include "key_notations.h"
+
+#include <iomanip>
+#include <sstream>
 
 const int BAD_PACKET_THRESHOLD = 100;
 
@@ -245,12 +261,79 @@ void fill_audio_data(const char* file_path, KeyFinder::AudioData &audio)
     }
 }
 
+int process_file(fs::path file_path,
+                 std::map< KeyFinder::key_t, std::__cxx11::basic_string<char> >
+                 selected_notation, bool all_notations) {
+    KeyFinder::KeyFinder key_finder;
+    KeyFinder::AudioData audio_data;
+    KeyFinder::key_t key;
+
+    // Hide av* warnings and errors
+    av_log_set_callback([](void *, int, const char*, va_list) {});
+
+    try
+    {
+      fill_audio_data(file_path.c_str(), audio_data);
+        key = key_finder.keyOfAudio(audio_data);
+    }
+    catch (std::exception &e)
+    {
+        std::cerr << e.what() << std::endl;
+        return 1;
+    }
+
+    // Only return a key when we don't have silence - rule 12: Be quiet!
+    if (key != KeyFinder::SILENCE)
+    {
+      if (all_notations) {
+        std::cout << KeyNotation::standard[key];
+        std::cout << "\t";
+        std::cout << KeyNotation::mappings["camelot"][key];
+        std::cout << "\t";
+        std::cout << KeyNotation::mappings["openkey"][key];
+      } else {
+        std::cout << selected_notation[key];
+      }
+      std::cout << "\t" << boost::io::quoted(file_path.c_str(),'\\','"') << std::endl;
+    }
+
+    return 0;
+}
+
+
+bool find_files( const fs::path & dir_path,            // in this directory,
+                 const std::string & file_name,        // search for this name,
+                 std::vector<fs::path> & paths_found ) // placing paths here
+{
+  if ( !exists( dir_path ) )
+    return false;
+  fs::directory_iterator end_itr; // default construction yields past-the-end
+  for ( fs::directory_iterator itr( dir_path );
+        itr != end_itr;
+        ++itr )
+  {
+    if ( is_directory(itr->status()) )
+    {
+      find_files( itr->path(), file_name, paths_found );
+    }
+    else if ( boost::ends_with(itr->path().filename().native(),file_name) )
+    {
+      paths_found.push_back(itr->path());
+    }
+  }
+  return paths_found.size() > 0;
+}
+
+
 int main(int argc, char** argv)
 {
     auto display_usage = [argv](std::ostream &stream)
     {
-        stream << "Usage: " << argv[0] << " [-h] [-n key-notation] filename"
-               << std::endl;
+        stream << "Usage: " << argv[0] << " [-h] [-a] [-n type] filename" << std::endl;
+        stream << "options:" << std::endl;
+        stream << "\t-h       \tthis help scrren" << std::endl;
+        stream << "\t-a       \tall notations" << std::endl;
+        stream << "\t-n <type>\tonly type (standard, camelot, openkey)" << std::endl;
     };
 
     // Default to the standard key notation
@@ -264,9 +347,9 @@ int main(int argc, char** argv)
     };
 
     opterr = 0;
-
+    bool all_notations = false;
     char c;
-    while ((c = getopt_long(argc, argv, "n:h", options, nullptr)) != -1)
+    while ((c = getopt_long(argc, argv, "n:ha", options, nullptr)) != -1)
     {
         switch (c)
         {
@@ -287,6 +370,9 @@ int main(int argc, char** argv)
 
             selected_notation = KeyNotation::mappings[optarg];
             break;
+        case 'a':
+          all_notations = true;
+          break;
         }
     }
 
@@ -299,31 +385,36 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    char* file_path = argv[optind];
-
-    KeyFinder::KeyFinder key_finder;
-    KeyFinder::AudioData audio_data;
-    KeyFinder::key_t key;
-
-    // Hide av* warnings and errors
-    av_log_set_callback([](void *, int, const char*, va_list) {});
-
-    try
+    for (int i = optind; i < argc; i++)
     {
-        fill_audio_data(file_path, audio_data);
-        key = key_finder.keyOfAudio(audio_data);
+      struct stat s;
+      if( stat(argv[i],&s) == 0 )
+      {
+        if( s.st_mode & S_IFDIR )
+        { //it's a directory
+          fs::path dir_path (argv[i]);
+          std::string file_name = ".mp3";
+          std::vector<fs::path> paths_found;
+          if (find_files( dir_path, file_name, paths_found)) {
+            BOOST_FOREACH(fs::path path_found, paths_found)
+            {
+              process_file(path_found,selected_notation,all_notations);
+            }
+          }
+        }
+        else if( s.st_mode & S_IFREG )
+        { //it's a file
+          process_file(argv[i],selected_notation,all_notations);
+        }
+        else
+        {
+          std::cerr << "Not file or directory: " << argv[i] << std::endl;
+        }
+      }
+      else
+      {
+        std::cerr << "Invalid argument given: " << argv[i] << std::endl;
+      }
     }
-    catch (std::exception &e)
-    {
-        std::cerr << e.what() << std::endl;
-        return 1;
-    }
-
-    // Only return a key when we don't have silence - rule 12: Be quiet!
-    if (key != KeyFinder::SILENCE)
-    {
-        std::cout << selected_notation[key] << std::endl;
-    }
-
     return 0;
 }

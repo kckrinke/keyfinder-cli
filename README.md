@@ -44,12 +44,16 @@ Three different key notations are supported and can be toggled:
     Keys are outputed using the Camelot Easymix Wheel notation.  Similar to
     Open Key notation `8B` is equivelant to C Major.
 
+Or, you can specify the `-a` option to have all notations included in the output.
+
 ### Building
 
 You will need to have the following dependencies installed on your machine
 
  * [ffmpeg](https://www.ffmpeg.org/) (This was not tested with `libav`)
  * [libkeyfinder](https://github.com/ibsh/libKeyFinder/)
+ * libavcodec-dev libavformat-dev libavresample-dev libavutil-dev
+ * libboost-filesystem-dev libboost1.62-dev
 
 As long as these two dependencies are installed then you should be able to
 simply type:
